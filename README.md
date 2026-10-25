@@ -1,28 +1,29 @@
 # Nagram X
 
-> [!IMPORTANT]
-> This project is archived and no longer maintained. No further updates, bug fixes, or support will be provided. The source code and existing releases remain available for reference and for anyone who wishes to continue development in a fork.
+> [!NOTE]
+> This is a maintained continuation of [risin42/NagramX](https://github.com/risin42/NagramX), which was archived in August 2026. All credit for the original project goes to its authors.
 
-## Archived Downloads
+## Downloads
 
-Previously published versions remain available through:
+* [GitHub Releases](https://github.com/JArthur02/NagramXX/releases)
 
-* [Telegram Channel](https://t.me/NagramX)
-* [GitHub Releases](https://github.com/risin42/NagramX/releases)
+The app keeps the package name `nu.gpu.nagram` but is signed with a different key than the original NagramX, so Android cannot update an existing NagramX install in place. Uninstall the original app first (this removes its local data; your chats stay on Telegram's servers).
+
+Archived builds of the original project remain on its [GitHub Releases](https://github.com/risin42/NagramX/releases) and [Telegram channel](https://t.me/NagramX).
 
 ## Verify APK
 
-Official APKs use the following Android signing certificate:
+APKs published here use the following Android signing certificate:
 
-* Package name: `nu.gpu.nagram` / `nu.gpu.nagramx` (base version)
-* SHA-256: `0D:51:91:56:E8:0C:91:8C:28:C4:80:BF:D1:3F:31:6A:3B:3B:F7:22:DB:53:2F:AB:74:66:0E:C8:E5:C5:06:A1`
+* Package name: `nu.gpu.nagram`
+* SHA-256: `6C:17:65:C7:00:9F:33:B5:61:00:59:F3:CA:13:43:1E:BD:06:AD:EB:42:AD:D1:09:06:D4:2A:A1:A1:10:1E:ED`
 
 ## Compilation Guide
 
 1. Clone the repository with its submodules:
 
     ```bash
-    git clone --recursive --shallow-submodules https://github.com/risin42/NagramX.git NagramX
+    git clone --recursive --shallow-submodules https://github.com/JArthur02/NagramXX.git NagramXX
     ```
 
     If you already cloned the repository without submodules, run:
@@ -38,7 +39,7 @@ Official APKs use the following Android signing certificate:
    TELEGRAM_APP_HASH=<your_telegram_app_hash>
    ```
 
-3. For APK signing: Replace `release.keystore` with your keystore and add signing configuration to `local.properties`:
+3. For APK signing: Place your keystore at `TMessagesProj/release.keystore` (it is git-ignored) and add signing configuration to `local.properties`:
 
    ```properties
    KEYSTORE_PASS=<your_keystore_password>
@@ -57,11 +58,9 @@ Official APKs use the following Android signing certificate:
 
 ## GitHub Actions Build
 
-The workflow can be used from a fork of this repository.
+The workflows can be used from a fork of this repository.
 
-1. Replace `TMessagesProj/release.keystore` with your keystore file.
-
-2. Configure `local.properties` with the following:
+1. Create a `local.properties` file with the following and Base64 encode it (`base64 -w0 local.properties`):
 
    ```properties
    KEYSTORE_PASS=<your_keystore_password>
@@ -71,16 +70,13 @@ The workflow can be used from a fork of this repository.
    TELEGRAM_APP_HASH=<your_telegram_app_hash>
    ```
 
-   Base64 encode the contents of this file.
+2. Add these repository secrets (Settings → Secrets and variables → Actions):
+   - `LOCAL_PROPERTIES`: Base64-encoded content from step 1
+   - `RELEASE_KEYSTORE`: Base64-encoded keystore file (`base64 -w0 release.keystore`)
 
-3. Configure GitHub Action secrets:
-   - `LOCAL_PROPERTIES`: Base64-encoded content from step 2
-   - `RELEASE_KEYSTORE`: Base64-encoded keystore file (`base64 -w0 release.keystore`). When set, it replaces `TMessagesProj/release.keystore` at build time, so the keystore doesn't need to be committed
-   - `HELPER_BOT_TOKEN`: Telegram bot token from [@Botfather](https://t.me/Botfather) (e.g., `1111:abcd`)
-   - `HELPER_BOT_TARGET`: Primary Telegram chat ID (e.g., `777000`)
-   - `HELPER_BOT_CANARY_TARGET`: Chat ID for test builds and metadata (can match `HELPER_BOT_TARGET`)
-
-4. Trigger the Release Build workflow.
+3. Workflows:
+   - **Staging build** runs on every push to `dev` and keeps the APKs as workflow artifacts.
+   - **Release Build** is started manually from the Actions tab. It builds signed APKs and publishes them as a GitHub Release tagged `v<versionName>-<versionCode>`; the in-app updater reads that tag. Bump `verCode` in `TMessagesProj/build.gradle` before each release. Tick *prerelease* to offer the build only on the beta update channel.
 
 ## Acknowledgments
 

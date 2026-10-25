@@ -53,6 +53,11 @@ keystorePwd = keystorePwd ?: System.getenv('KEYSTORE_PASS')
 alias = alias ?: System.getenv('ALIAS_NAME')
 pwd = pwd ?: System.getenv('ALIAS_PASS')
 
+// Supply your own keystore as TMessagesProj/release.keystore (CI restores it from the
+// RELEASE_KEYSTORE secret). Without it, debug builds use the debug key and release
+// builds are left unsigned.
+def hasReleaseKey = project.file('release.keystore').exists() && keystorePwd != null
+
 def nativeTarget = System.getenv('NATIVE_TARGET') ?: ''
 
 if (nativeTarget == 'SKIP') {
@@ -168,7 +173,7 @@ android {
             debuggable = true
             jniDebuggable = true
             multiDexEnabled = true
-            signingConfig = signingConfigs.release
+            signingConfig = hasReleaseKey ? signingConfigs.release : signingConfigs.debug
         }
 
         staging {
@@ -179,7 +184,7 @@ android {
             multiDexEnabled = true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             matchingFallbacks = ['release', 'staging', 'debug']
-            signingConfig = signingConfigs.release
+            if (hasReleaseKey) signingConfig = signingConfigs.release
         }
 
         release {
@@ -190,7 +195,7 @@ android {
             multiDexEnabled = true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             matchingFallbacks = ['release', 'staging', 'debug']
-            signingConfig = signingConfigs.release
+            if (hasReleaseKey) signingConfig = signingConfigs.release
         }
     }
 

@@ -14,6 +14,7 @@ import org.telegram.messenger.browser.Browser;
 import org.telegram.ui.Cells.TextSettingsCell;
 
 import tw.nekomimi.nekogram.DatacenterActivity;
+import tw.nekomimi.nekogram.helpers.remote.UpdateHelper;
 
 public class NekoAboutActivity extends BaseNekoSettingsActivity {
 
@@ -52,7 +53,7 @@ public class NekoAboutActivity extends BaseNekoSettingsActivity {
         } else if (position == translationRow) {
             Browser.openUrl(getParentActivity(), "https://crowdin.com/project/NagramX");
         } else if (position == sourceCodeRow) {
-            Browser.openUrl(getParentActivity(), "https://github.com/risin42/NagramX");
+            Browser.openUrl(getParentActivity(), "https://github.com/" + UpdateHelper.GITHUB_REPO);
         } else if (position == datacenterStatusRow) {
             presentFragment(new DatacenterActivity(0));
         }
