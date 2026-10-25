@@ -21,7 +21,23 @@ CODE="${DC}${DC}${DC}${DC}${DC}"
 report() { echo "| $1 | $2 |" >> "$SUMMARY"; echo "$1: $2"; }
 shot() { STEP=$((STEP + 1)); adb exec-out screencap -p > "$OUT/$(printf '%02d' $STEP)-$1.png"; }
 alive() { adb shell pidof "$PKG" >/dev/null; }
-dump() { adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb shell cat /sdcard/ui.xml > "$OUT/ui-last.xml"; }
+# uiautomator cannot dump screens that never go idle (e.g. the animated intro), so retry
+# and let callers fall back to tapping by screen position.
+dump() {
+  local _
+  for _ in 1 2 3; do
+    if adb shell uiautomator dump /sdcard/ui.xml 2>&1 | grep -q "dumped to"; then
+      adb shell cat /sdcard/ui.xml > "$OUT/ui-last.xml"
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+SCREEN=$(adb shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1)
+W=${SCREEN%x*}; H=${SCREEN#*x}
+# Tap at a fraction of the screen size, e.g. tap_frac 50 88 taps (50% width, 88% height).
+tap_frac() { adb shell input tap $((W * $1 / 100)) $((H * $2 / 100)); }
 
 # Print "x y" for the centre of the first node whose text or content-desc matches $1
 # (case-insensitive regex). $2 optionally restricts the node class (e.g. EditText).
@@ -68,8 +84,11 @@ if alive; then report "Launch" "ok"; else report "Launch" "**app not running**";
 
 # 2. Login on the test backend
 LOGGED_IN=""
-if alive && tap_node 'start messaging'; then
+if alive; then
+  # The intro is animated, so its button usually has to be tapped by position.
+  tap_node 'start messaging' || tap_frac 50 88
   sleep 5
+  if [ -z "$(find_node 'country code' EditText)" ]; then tap_frac 50 90; sleep 5; fi
   shot phone-screen
   if tap_node 'country code' EditText; then
     adb shell input keyevent KEYCODE_MOVE_END
@@ -108,7 +127,7 @@ if alive && tap_node 'start messaging'; then
     report "Login (test DC)" "country code field not found"
   fi
 else
-  report "Login (test DC)" "'Start Messaging' not found"
+  report "Login (test DC)" "skipped: app not running"
 fi
 
 # 3. Send a message to Saved Messages
@@ -129,7 +148,7 @@ if [ -n "$LOGGED_IN" ]; then
   adb shell am start -a android.intent.action.VIEW -d "tg://settings" -p "$PKG" >/dev/null
   sleep 6
   shot settings
-  for _ in 1 2 3; do [ -n "$(find_node 'N-Settings')" ] && break; adb shell input swipe 540 1600 540 600 300; sleep 1; done
+  for _ in 1 2 3; do [ -n "$(find_node 'N-Settings')" ] && break; adb shell input swipe $((W / 2)) $((H * 3 / 4)) $((W / 2)) $((H / 4)) 300; sleep 1; done
   if tap_node 'N-Settings'; then
     sleep 4
     shot nagram-settings
