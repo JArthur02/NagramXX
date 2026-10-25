@@ -3,6 +3,8 @@
 # account on Telegram's TEST servers (phone 99966XYYYY, code XXXXX, no SMS), then sends a
 # message to Saved Messages, opens Settings and N-Settings and runs the update check.
 #
+# The logged-in steps only run if the test server accepts the code; it has been
+# answering PHONE_CODE_INVALID to its documented code, which is reported, not failed.
 # Only crashes fail the job. Every other step is reported in the job summary, with
 # screenshots, UI dumps and logcat in smoke/.
 set -u
@@ -137,14 +139,15 @@ if alive; then
       done
     }
     enter_code 1
-    sleep 6
-    if adb logcat -d | grep -q "PHONE_CODE_INVALID"; then
-      report "Login code" "rejected once (PHONE_CODE_INVALID); retrying"
-      enter_code 2
-    fi
-    sleep 12
+    sleep 10
     shot after-code
-    if ! logged_in; then
+    LOG=$(adb logcat -d)
+    if echo "$LOG" | grep -q 'TL_auth_signIn'; then report "Code submitted" "ok (auth.signIn sent)"; else report "Code submitted" "**no auth.signIn request**"; fi
+    # Telegram's test servers have been rejecting their documented XXXXX code
+    # (PHONE_CODE_INVALID on DC 1 and 2), so a rejection is reported, not failed.
+    CODE_REJECTED=""
+    echo "$LOG" | grep -q 'PHONE_CODE_INVALID' && CODE_REJECTED=1
+    if [ -z "$CODE_REJECTED" ] && ! logged_in; then
       # A new number goes to sign-up; the first-name field is focused.
       tap_node 'first name' EditText >/dev/null 2>&1
       type_text Nagram
@@ -154,11 +157,13 @@ if alive; then
     fi
     # Terms of Service, if shown.
     tap_node '^(accept|agree)$' >/dev/null 2>&1 && sleep 5
-    for _ in 1 2 3 4 5 6; do logged_in && break; sleep 5; done
+    [ -z "$CODE_REJECTED" ] && for _ in 1 2 3 4 5 6; do logged_in && break; sleep 5; done
     shot after-login
     if logged_in; then
       LOGGED_IN=1
       report "Login (test DC)" "ok"
+    elif [ -n "$CODE_REJECTED" ]; then
+      report "Login (test DC)" "test server rejected the code (PHONE_CODE_INVALID); logged-in checks skipped"
     else
       report "Login (test DC)" "**not logged in**; see screenshots"
     fi
