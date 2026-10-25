@@ -65,6 +65,8 @@ wait_node() { # pattern timeout_seconds [class]
   return 1
 }
 type_text() { adb shell input text "$1"; }
+# Logged in once UserConfig has saved the account (debug builds allow run-as).
+logged_in() { adb shell run-as "$PKG" cat shared_prefs/userconfing.xml 2>/dev/null | grep -q 'name="user"'; }
 
 echo "## Emulator smoke test" >> "$SUMMARY"
 echo "Test account: +$PHONE on Telegram test DC $DC" >> "$SUMMARY"
@@ -108,29 +110,30 @@ if alive; then
     sleep 3
     # Optional "is this number correct?" confirmation.
     tap_node '^(yes|ok|continue)$' >/dev/null 2>&1
-    if wait_node '\bsent\b|enter (the )?code|check your telegram' 40; then
-      sleep 3
-      shot code-screen
-      type_text "$CODE"
-      sleep 10
-      # A new number goes to sign-up: first name, then Done.
-      if [ -n "$(find_node 'first name' EditText)" ]; then
-        tap_node 'first name' EditText && type_text Nagram
-        tap_node '^done$|^next$'
-        sleep 10
-      fi
-      # Terms of Service, if shown.
-      tap_node '^(accept|agree)$' >/dev/null 2>&1 && sleep 5
-      shot after-login
-      if wait_node 'search|chats|saved messages|archived' 30; then
-        LOGGED_IN=1
-        report "Login (test DC)" "ok"
-      else
-        report "Login (test DC)" "did not reach the chat list; see screenshots"
-      fi
+    # The code screen has a running countdown, so uiautomator usually cannot read it;
+    # the code field is focused, so type the code blind.
+    sleep 12
+    shot code-screen
+    type_text "$CODE"
+    sleep 12
+    shot after-code
+    if ! logged_in; then
+      # A new number goes to sign-up; the first-name field is focused.
+      tap_node 'first name' EditText >/dev/null 2>&1
+      type_text Nagram
+      tap_node '^done$|^next$' || { adb shell input keyevent KEYCODE_ENTER; adb shell input keyevent KEYCODE_ENTER; }
+      sleep 12
+      shot after-signup
+    fi
+    # Terms of Service, if shown.
+    tap_node '^(accept|agree)$' >/dev/null 2>&1 && sleep 5
+    for _ in 1 2 3 4 5 6; do logged_in && break; sleep 5; done
+    shot after-login
+    if logged_in; then
+      LOGGED_IN=1
+      report "Login (test DC)" "ok"
     else
-      shot no-code-screen
-      report "Login (test DC)" "no code screen; see screenshots"
+      report "Login (test DC)" "**not logged in**; see screenshots"
     fi
   else
     report "Login (test DC)" "country code field not found"
@@ -143,14 +146,19 @@ fi
 if [ -n "$LOGGED_IN" ]; then
   adb shell am start -a android.intent.action.VIEW -d "tg://resolve?phone=$PHONE" -p "$PKG" >/dev/null
   sleep 8
-  if tap_node '^message$' EditText; then
-    type_text "Smoke%stest%sfrom%sCI"
-    tap_node '^send$' && sleep 5
-    shot saved-messages
-    if [ -n "$(find_node 'Smoke test from CI')" ]; then report "Send message" "ok"; else report "Send message" "message not visible"; fi
+  # Fall back to tapping the input bar and send button by position if the chat
+  # cannot be read by uiautomator.
+  tap_node '^message$' EditText || tap_frac 45 94
+  sleep 1
+  type_text "Smoke%stest%sfrom%sCI"
+  sleep 1
+  tap_node '^send$' || tap_frac 93 94
+  sleep 5
+  shot saved-messages
+  if [ -n "$(find_node 'Smoke test from CI')" ]; then
+    report "Send message" "ok"
   else
-    shot saved-messages
-    report "Send message" "message field not found"
+    report "Send message" "not confirmed (screen not readable); see screenshot"
   fi
 
   # 4. Settings and N-Settings
