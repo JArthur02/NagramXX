@@ -805,11 +805,7 @@ public class VoIPHelper {
 
 
     public static String getLogFilePath(String name) {
-        final Calendar c = Calendar.getInstance();
-        final File externalFilesDir = ApplicationLoader.applicationContext.getExternalFilesDir(null);
-        return new File(externalFilesDir, String.format(Locale.US, "logs/%02d_%02d_%04d_%02d_%02d_%02d_%s.txt",
-                c.get(Calendar.DATE), c.get(Calendar.MONTH) + 1, c.get(Calendar.YEAR), c.get(Calendar.HOUR_OF_DAY),
-                c.get(Calendar.MINUTE), c.get(Calendar.SECOND), name)).getAbsolutePath();
+        return new File(ApplicationLoader.applicationContext.getCacheDir(), "logs/" + name + ".log").getPath();
     }
 
 	public static String getLogFilePath(String callId, boolean stats) {

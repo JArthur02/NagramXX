@@ -1,0 +1,13 @@
+diff --git a/libraries/exoplayer/build.gradle b/libraries/exoplayer/build.gradle
+index dd05491..4383930 100644
+--- a/libraries/exoplayer/build.gradle
++++ b/libraries/exoplayer/build.gradle
+@@ -16,7 +16,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+ 
+ apply plugin: 'com.android.library'
+ apply from: "$gradle.ext.androidxMediaSettingsDir/common_config.gradle"
+-apply plugin: 'kotlin-android'
++// AGP 9 has built-in Kotlin support; applying kotlin-android on top of it fails (NagramX).
+ 
+ android {
+     namespace 'androidx.media3.exoplayer'

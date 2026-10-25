@@ -5,17 +5,31 @@ plugins {
     id 'com.android.application'
     id 'com.google.gms.google-services'
     id 'com.google.firebase.crashlytics'
-    id 'org.telegram.lottie-meta'
+    // Upstream splits these between TMessagesProj (library) and TMessagesProj_App (application);
+    // here TMessagesProj is the application, so it applies both.
+    id 'org.telegram.build-plugin'      // generates org.telegram.localization.LocalizationUtils
+    id 'org.telegram.build-app-plugin'  // localization_*.bin, string_resource_ids.bin, lottie_meta.bin, stable string ids
     id 'idea'
 }
 
 idea {
     module {
         excludeDirs += [
-            file('jni/third_party'),
-            file('jni/ffmpeg'),
+            file('jni/td'),
+            file('jni/third_party/absl'),
+            file('jni/third_party/boringssl'),
+            file('jni/third_party/dav1d'),
+            file('jni/third_party/ffmpeg'),
+            file('jni/third_party/libvpx'),
+            file('jni/third_party/libyuv'),
+            file('jni/third_party/openh264'),
+            file('jni/third_party/xiph'),
+            file('jni/third_party/wamr'),
+            file('jni/third_party/libprisma'),
+            file('jni/third_party/boost-regex'),
+            file('jni/tgcalls'),
             file('jni/tlottie'),
-            file('jni/boringssl'),
+            file('jni/voip/webrtc'),
             file('jni/sqlite')
         ]
     }
@@ -24,7 +38,7 @@ idea {
 def buildTimestamp = System.getenv('BUILD_TIMESTAMP') ?: '0'
 def commitId = System.getenv('COMMIT_ID')
 def verName = "${APP_VERSION_NAME}${commitId?.take(7) ? "-${commitId.take(7)}" : ''}"
-def verCode = 1261
+def verCode = 1262
 
 def officialVer = APP_VERSION_NAME
 def officialCode = APP_VERSION_CODE
@@ -85,6 +99,14 @@ android {
                 'en', 'ar', 'de', 'es', 'es-rES', 'fa-rIR', 'in-rID', 'it', 'it-rIT', 'ja-rJP',
                 'ko', 'nl', 'pl-rPL', 'pt-rBR', 'ru-rRU', 'tr-rTR', 'uk-rUA', 'vi-rVN', 'zh-rCN', 'zh-rTW'
         ]
+        // EmojiPack memory-maps assets/emoji.pack, which only works for uncompressed assets.
+        noCompress += 'pack'
+        // Strip JLatexMath fonts we don't ship (transitive AAR assets from io.noties.markwon:ext-latex ->
+        // ru.noties:jlatexmath-android under assets/org/scilab/forge/jlatexmath/fonts/).
+        //   keep:  base/, latin/, maths/, euler/  (\mathbb, \mathcal, \mathfrak still work)
+        //   drop:  latin/optional/, maths/optional/  (~290 KB; \textbf/\textit/\mathds fall back)
+        //          licences/                          (~20 KB; pure license text files)
+        ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~:!optional:!licences:!*stmary*:!*eufb*'
     }
 
     packaging {
@@ -131,6 +153,7 @@ android {
 
         externalNativeBuild {
             cmake {
+                targets 'tmessages.49'
                 arguments '-DANDROID_STL=c++_static', '-DANDROID_PLATFORM=android-27', '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON'
                 System.getenv('PATH').split(File.pathSeparator).any { path ->
                     var file = Paths.get("${path}${File.separator}ccache${if (OperatingSystem.current().windows) ".exe" else ""}").toFile()
@@ -179,6 +202,9 @@ android {
             jniDebuggable = true
             multiDexEnabled = true
             signingConfig = hasReleaseKey ? signingConfigs.release : signingConfigs.debug
+            // Upstream 13.0.3 code reads these; values as upstream's debug/release build types.
+            buildConfigField 'boolean', 'DEBUG_VERSION', 'true'
+            buildConfigField 'boolean', 'DEBUG_PRIVATE_VERSION', 'true'
         }
 
         staging {
@@ -190,6 +216,8 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             matchingFallbacks = ['release', 'staging', 'debug']
             if (hasReleaseKey) signingConfig = signingConfigs.release
+            buildConfigField 'boolean', 'DEBUG_VERSION', 'false'
+            buildConfigField 'boolean', 'DEBUG_PRIVATE_VERSION', 'false'
         }
 
         release {
@@ -201,10 +229,10 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             matchingFallbacks = ['release', 'staging', 'debug']
             if (hasReleaseKey) signingConfig = signingConfigs.release
+            buildConfigField 'boolean', 'DEBUG_VERSION', 'false'
+            buildConfigField 'boolean', 'DEBUG_PRIVATE_VERSION', 'false'
         }
     }
-
-    sourceSets.main.jniLibs.srcDirs = ['./jni/']
 
     namespace = 'org.telegram.messenger'
 }
@@ -241,9 +269,11 @@ dependencies {
     implementation 'androidx.sharetarget:sharetarget:1.2.0'
     implementation 'androidx.interpolator:interpolator:1.0.0'
     implementation 'androidx.biometric:biometric:1.1.0'
+    implementation 'androidx.webkit:webkit:1.14.0'
     implementation 'androidx.car.app:app:1.7.0'
     implementation 'androidx.car.app:app-projected:1.7.0'
     implementation 'org.nanohttpd:nanohttpd:2.3.1'
+    implementation 'com.neovisionaries:nv-websocket-client:2.14'
     compileOnly 'org.checkerframework:checker-qual:2.5.2'
     compileOnly 'org.checkerframework:checker-compat-qual:2.5.0'
     implementation 'com.google.firebase:firebase-messaging:25.1.2'
@@ -275,11 +305,17 @@ dependencies {
     implementation "io.noties.markwon:html:4.6.2"
     implementation "io.noties.markwon:inline-parser:4.6.2"
     implementation "io.noties.markwon:ext-latex:4.6.2"
+    // AndroidX Media3 (submodule TMessagesProj_Modules/media, see settings.gradle)
+    implementation project(':TMessagesProj_Modules:media3:media-lib-exoplayer')
+    implementation project(':TMessagesProj_Modules:media3:media-lib-exoplayer-dash')
+    implementation project(':TMessagesProj_Modules:media3:media-lib-exoplayer-hls')
+    implementation project(':TMessagesProj_Modules:media3:media-lib-decoder-ffmpeg')
+    implementation project(':TMessagesProj_Modules:media3:media-lib-session')
     // payment
     implementation('com.stripe:stripe-android:2.0.2') {
         exclude group: 'com.android.support', module: 'support-annotations'
     }
-    implementation 'com.android.billingclient:billing:7.1.1'
+    implementation 'com.android.billingclient:billing:8.0.0'
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs_nio:2.1.5'
 
     // kotlin
