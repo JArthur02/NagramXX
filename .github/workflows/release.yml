@@ -60,12 +60,7 @@ jobs:
       - name: Restore Signing Keystore
         env:
           RELEASE_KEYSTORE: ${{ secrets.RELEASE_KEYSTORE }}
-        run: |
-          if [ -z "$RELEASE_KEYSTORE" ]; then
-            echo "::error::RELEASE_KEYSTORE secret is not set; release builds must be signed."
-            exit 1
-          fi
-          echo "$RELEASE_KEYSTORE" | base64 --decode > TMessagesProj/release.keystore
+        run: bash .github/scripts/restore-keystore.sh --required
       - name: Release Build
         id: release_build_step
         env:

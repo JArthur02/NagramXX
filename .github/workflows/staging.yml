@@ -73,10 +73,7 @@ jobs:
       - name: Restore Signing Keystore
         env:
           RELEASE_KEYSTORE: ${{ secrets.RELEASE_KEYSTORE }}
-        run: |
-          if [ -n "$RELEASE_KEYSTORE" ]; then
-            echo "$RELEASE_KEYSTORE" | base64 --decode > TMessagesProj/release.keystore
-          fi
+        run: bash .github/scripts/restore-keystore.sh
       - name: Staging Build
         id: staging_build_step
         env:
