@@ -94,7 +94,12 @@ if alive; then
     adb shell input keyevent KEYCODE_MOVE_END
     for _ in 1 2 3 4 5; do adb shell input keyevent KEYCODE_DEL; done
     type_text 999   # "999" switches the app to the test backend
-    tap_node 'phone number' EditText && type_text "$PHONE_REST"
+    # The field may be pre-filled with the emulator's own number; clear it first.
+    if tap_node 'phone number' EditText; then
+      adb shell input keyevent KEYCODE_MOVE_END
+      for _ in $(seq 1 25); do adb shell input keyevent KEYCODE_DEL; done
+      type_text "$PHONE_REST"
+    fi
     shot phone-entered
     tap_node '^done$|^next$'
     sleep 3
@@ -121,6 +126,7 @@ if alive; then
         report "Login (test DC)" "did not reach the chat list; see screenshots"
       fi
     else
+      shot no-code-screen
       report "Login (test DC)" "no code screen; see screenshots"
     fi
   else
