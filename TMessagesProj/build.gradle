@@ -37,7 +37,12 @@ Properties properties
 def base64 = System.getenv('LOCAL_PROPERTIES')
 if (base64 != null && !base64.isBlank()) {
     properties = new Properties()
-    properties.load(new ByteArrayInputStream(Base64.decoder.decode(base64)))
+    // Documented as Base64, but also accept the plain file contents pasted into the secret.
+    def text = base64.trim()
+    if (!(text =~ /(?m)^\s*(KEYSTORE_PASS|ALIAS_NAME|ALIAS_PASS|TELEGRAM_APP_ID|TELEGRAM_APP_HASH)\s*=/)) {
+        text = new String(Base64.mimeDecoder.decode(text), 'UTF-8')
+    }
+    properties.load(new StringReader(text))
 } else if (project.rootProject.file('local.properties').exists()) {
     properties = new Properties()
     properties.load(project.rootProject.file('local.properties').newDataInputStream())
