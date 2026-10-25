@@ -840,6 +840,12 @@ object NaConfig {
             ConfigItem.configTypeBool,
             false
         )
+    val showTonWallet =
+        addConfig(
+            "ShowTonWallet",
+            ConfigItem.configTypeBool,
+            false
+        )
     val showStickersRowToplevel =
         addConfig(
             "ShowStickersRowToplevel",

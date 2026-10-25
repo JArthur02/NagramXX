@@ -1,0 +1,66 @@
+name: Emulator smoke test
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Launch on emulator
+    runs-on: ubuntu-latest
+    env:
+      NATIVE_TARGET: "x86_64"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          submodules: recursive
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+      - name: Set up Android SDK Tools
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "build-tools;36.0.0 ndk;27.2.12479018 platforms;android-37.0"
+      - name: Install Native Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes nasm
+      - name: Configure Android SDK Path
+        run: |
+          echo "sdk.dir=${ANDROID_HOME}" >> local.properties
+      - name: Debug Build (x86_64)
+        run: |
+          export LOCAL_PROPERTIES="${{ secrets.LOCAL_PROPERTIES }}"
+          ./gradlew TMessagesProj:assembleDebug
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash .github/scripts/emulator-smoke.sh
+      - name: Upload screenshots and logcat
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: emulator-smoke
+          path: smoke/

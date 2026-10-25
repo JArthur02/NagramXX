@@ -1,0 +1,182 @@
+// Applies the fork's changes to git submodules, kept as patch files in this repository:
+//
+//   patches/tgcalls/*.patch -> TMessagesProj/jni/tgcalls
+//   patches/media/*.patch   -> TMessagesProj_Modules/media
+//
+// Applied from settings.gradle while the build is being configured (patches/media may change Media3
+// Gradle scripts, so it has to happen before the Media3 projects are evaluated), and checked again by
+// the :applySubmodulePatches task, which runs before preBuild, i.e. before Java/Kotlin compilation
+// and CMake.
+//
+// Patches are applied in file name order with `git apply`, from inside the submodule, so create them
+// with `git -C <submodule> diff > patches/<name>/NNNN-description.patch` against the pinned commit.
+// Applying is idempotent: a series that is already applied (`git apply --reverse --check` succeeds) is
+// skipped. The applied series is recorded in the submodule's git dir (nagram-applied-patches/); when
+// a patch file is edited, added or removed, the recorded series is reverted and the new one applied.
+// The build fails if the series neither applies nor is already applied.
+
+import org.gradle.api.provider.ValueSource
+import org.gradle.api.provider.ValueSourceParameters
+import org.gradle.process.ExecOperations
+
+import javax.inject.Inject
+import java.security.MessageDigest
+
+class SubmodulePatcher {
+    // patch directory -> submodule, both relative to the root project directory
+    static final Map<String, String> TARGETS = [
+            'patches/tgcalls': 'TMessagesProj/jni/tgcalls',
+            'patches/media'  : 'TMessagesProj_Modules/media',
+    ]
+
+    private static final String STAMP_DIR = 'nagram-applied-patches'
+
+    /** Brings every submodule in line with its patch directory. Returns a fingerprint of the applied patches. */
+    static String sync(ExecOperations exec, File rootDir, Logger logger) {
+        return TARGETS.collect { patchDirPath, submodulePath ->
+            syncOne(exec, new File(rootDir, patchDirPath), patchDirPath, new File(rootDir, submodulePath), submodulePath, logger)
+        }.join('\n')
+    }
+
+    private static String syncOne(ExecOperations exec, File patchDir, String patchDirPath,
+                                  File submoduleDir, String submodulePath, Logger logger) {
+        List<File> patches = listPatches(patchDir)
+        String state = fingerprint(patches)
+
+        if (!new File(submoduleDir, '.git').exists()) {
+            if (patches.isEmpty()) {
+                return "$submodulePath: no patches"
+            }
+            throw new GradleException("Submodule $submodulePath is not checked out, so the patches in $patchDirPath " +
+                    "cannot be applied. Run `git submodule update --init --recursive`.")
+        }
+
+        File stampDir = new File(git(exec, submoduleDir, ['rev-parse', '--absolute-git-dir'], true).out.trim(), STAMP_DIR)
+        List<File> recorded = listPatches(stampDir)
+
+        if (!patches.isEmpty() && isApplied(exec, submoduleDir, patches)) {
+            if (fingerprint(recorded) != state) {
+                record(stampDir, patches)
+            }
+            logger.info("Submodule patches in $patchDirPath are already applied to $submodulePath")
+            return "$submodulePath: $state"
+        }
+
+        // Revert a previously applied series that differs from the current one (edited, added or removed patches).
+        if (!recorded.isEmpty()) {
+            if (isApplied(exec, submoduleDir, recorded)) {
+                git(exec, submoduleDir, ['apply', '--reverse', '--whitespace=nowarn'] + paths(recorded.reverse()), true)
+                logger.lifecycle("Reverted outdated patches ${recorded*.name} in $submodulePath")
+            }
+            stampDir.deleteDir()
+        }
+
+        if (patches.isEmpty()) {
+            return "$submodulePath: no patches"
+        }
+
+        def check = git(exec, submoduleDir, ['apply', '--check', '--whitespace=nowarn'] + paths(patches), false)
+        if (!check.ok) {
+            def commit = git(exec, submoduleDir, ['rev-parse', 'HEAD'], false).out.trim()
+            throw new GradleException("The patches in $patchDirPath (${patches*.name.join(', ')}) neither apply to " +
+                    "submodule $submodulePath (at $commit) nor are already applied.\n" +
+                    "git apply says:\n${check.err.trim()}\n" +
+                    "If the submodule has other local changes, revert them (`git -C $submodulePath checkout -- .`); " +
+                    "if the submodule was updated, regenerate the patches against the new commit.")
+        }
+        git(exec, submoduleDir, ['apply', '--whitespace=nowarn'] + paths(patches), true)
+        record(stampDir, patches)
+        logger.lifecycle("Applied ${patches*.name} from $patchDirPath to $submodulePath")
+        return "$submodulePath: $state"
+    }
+
+    private static boolean isApplied(ExecOperations exec, File submoduleDir, List<File> series) {
+        return git(exec, submoduleDir, ['apply', '--reverse', '--check', '--whitespace=nowarn'] + paths(series.reverse()), false).ok
+    }
+
+    private static List<File> listPatches(File dir) {
+        File[] files = dir.listFiles({ File file -> file.isFile() && file.name.endsWith('.patch') } as FileFilter)
+        return files == null ? [] : (files as List<File>).sort { it.name }
+    }
+
+    private static List<String> paths(List<File> files) {
+        return files.collect { it.absolutePath }
+    }
+
+    private static String fingerprint(List<File> patches) {
+        return patches.collect { file ->
+            def digest = MessageDigest.getInstance('SHA-256').digest(file.bytes)
+            file.name + '@' + digest.encodeHex().toString().take(16)
+        }.join(',')
+    }
+
+    private static void record(File stampDir, List<File> patches) {
+        stampDir.deleteDir()
+        stampDir.mkdirs()
+        patches.each { patch -> new File(stampDir, patch.name).bytes = patch.bytes }
+    }
+
+    private static Map git(ExecOperations exec, File dir, List<String> args, boolean mustSucceed) {
+        def out = new ByteArrayOutputStream()
+        def err = new ByteArrayOutputStream()
+        def result
+        try {
+            result = exec.exec { spec ->
+                spec.commandLine(['git', '-C', dir.absolutePath] + args)
+                spec.standardOutput = out
+                spec.errorOutput = err
+                spec.ignoreExitValue = true
+            }
+        } catch (Exception e) {
+            throw new GradleException("Unable to run git for submodule patches (is git installed and on PATH?)", e)
+        }
+        def outcome = [ok: result.exitValue == 0, out: out.toString('UTF-8'), err: err.toString('UTF-8')]
+        if (mustSucceed && !outcome.ok) {
+            throw new GradleException("`git ${args.join(' ')}` failed in $dir:\n${outcome.err.trim()}")
+        }
+        return outcome
+    }
+}
+
+interface SubmodulePatchesParameters extends ValueSourceParameters {
+    Property<String> getRootDir()
+}
+
+// Configuration-cache friendly way to run git while the build is configured. Gradle evaluates it again
+// before reusing a cached configuration, so the patches are (re)applied on every build.
+abstract class SubmodulePatchesSource implements ValueSource<String, SubmodulePatchesParameters> {
+    @Inject
+    abstract ExecOperations getExecOperations()
+
+    @Override
+    String obtain() {
+        return SubmodulePatcher.sync(execOperations, new File(parameters.rootDir.get()), Logging.getLogger(SubmodulePatchesSource))
+    }
+}
+
+abstract class ApplySubmodulePatchesTask extends DefaultTask {
+    @Internal
+    abstract Property<String> getRootDir()
+
+    @Inject
+    abstract ExecOperations getExecOperations()
+
+    @TaskAction
+    void run() {
+        SubmodulePatcher.sync(execOperations, new File(rootDir.get()), logger)
+    }
+}
+
+def submodulePatchesRoot = settingsDir.absolutePath
+
+providers.of(SubmodulePatchesSource) { spec ->
+    spec.parameters.rootDir.set(submodulePatchesRoot)
+}.get()
+
+gradle.rootProject { project ->
+    project.tasks.register('applySubmodulePatches', ApplySubmodulePatchesTask) { task ->
+        task.group = 'build setup'
+        task.description = 'Applies patches/<name>/*.patch to the tgcalls and Media3 submodules.'
+        task.rootDir.set(submodulePatchesRoot)
+    }
+}

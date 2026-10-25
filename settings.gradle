@@ -25,3 +25,33 @@ dependencyResolutionManagement {
 
 rootProject.name = "NagramX"
 include ':TMessagesProj'
+
+// Fork changes to the tgcalls and Media3 submodules live in patches/<name>/*.patch and are applied
+// here, before any project is configured: patches/media may touch the Media3 Gradle scripts that
+// core_settings.gradle includes below. The same check runs again as the :applySubmodulePatches task.
+apply from: file('gradle/submodule-patches.gradle')
+
+// AndroidX Media3 (submodule TMessagesProj_Modules/media), replaces the in-tree ExoPlayer 2.
+gradle.ext.androidxMediaModulePrefix = 'TMessagesProj_Modules:media3:media-'
+apply from: file("TMessagesProj_Modules/media/core_settings.gradle")
+
+// core_settings.gradle includes every Media3 module. Only the ones TMessagesProj depends on (and their
+// project dependencies) are configured; the rest become empty projects, so that they cost nothing and
+// their AGP 8-only build scripts are never evaluated. Test-only modules stay empty too: the Media3
+// modules reference them from testImplementation/androidTestImplementation, which we never resolve.
+def media3Modules = [
+        'lib-common', 'lib-container', 'lib-database', 'lib-datasource', 'lib-decoder', 'lib-extractor',
+        'lib-exoplayer', 'lib-exoplayer-dash', 'lib-exoplayer-hls', 'lib-decoder-ffmpeg', 'lib-session',
+]
+def media3Prefix = ':' + gradle.ext.androidxMediaModulePrefix
+def disableUnusedMedia3Modules
+disableUnusedMedia3Modules = { ProjectDescriptor descriptor ->
+    if (descriptor.path.startsWith(media3Prefix) && !media3Modules.contains(descriptor.path.substring(media3Prefix.length()))) {
+        descriptor.buildFileName = 'build.gradle.disabled-by-nagram'
+    }
+    descriptor.children.each { disableUnusedMedia3Modules(it) }
+}
+disableUnusedMedia3Modules(rootProject)
+// The intermediate project ':TMessagesProj_Modules:media3' has no directory of its own, which Gradle 9 rejects.
+project(':TMessagesProj_Modules:media3').projectDir = file('TMessagesProj_Modules/media')
+project(':TMessagesProj_Modules:media3').buildFileName = 'build.gradle.disabled-by-nagram'

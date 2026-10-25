@@ -350,10 +350,9 @@ public class AndroidUtil {
         return false;
     }
 
-    @SuppressWarnings("ConstantValue")
+    // The bundled google-services.json belongs to the original NagramX project,
+    // so crash reports must not be sent there.
     public static boolean shouldEnableCrashlytics() {
-        return !BuildConfig.DEBUG
-                && "nu.gpu.nagram".equals(BuildConfig.APPLICATION_ID)
-                && !NaConfig.INSTANCE.getDisableCrashlyticsCollection().Bool();
+        return false;
     }
 }

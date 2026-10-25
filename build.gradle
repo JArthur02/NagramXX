@@ -2,6 +2,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id 'com.android.application' apply false
+    id 'com.android.library' apply false
     id 'com.google.gms.google-services' version '4.5.0' apply false
     id 'com.google.firebase.crashlytics' version '3.0.8' apply false
 }
@@ -22,8 +23,6 @@ subprojects {
                 compileOptions {
                     sourceCompatibility = JavaVersion.VERSION_21
                     targetCompatibility = JavaVersion.VERSION_21
-
-                    coreLibraryDesugaringEnabled = true
                 }
 
                 kotlin {
@@ -34,11 +33,41 @@ subprojects {
 
                 defaultConfig {
                     minSdk = 27
+                }
+            }
+        }
+        if (plugins.hasPlugin("com.android.application")) {
+            android {
+                defaultConfig {
                     targetSdk = 36
                 }
 
+                compileOptions.coreLibraryDesugaringEnabled = true
+
                 buildFeatures.buildConfig = true
             }
+        }
+    }
+
+    // AndroidX Media3 modules (TMessagesProj_Modules/media): we only consume their release code, so skip
+    // their unit and instrumentation test variants (their test-only dependency modules are not configured,
+    // see settings.gradle).
+    if (project.path.startsWith(':TMessagesProj_Modules:')) {
+        plugins.withId('com.android.library') {
+            androidComponents {
+                beforeVariants(selector().all()) { variantBuilder ->
+                    variantBuilder.hostTests.values().each { it.enable = false }
+                    variantBuilder.deviceTests.values().each { it.enable = false }
+                }
+            }
+        }
+    }
+
+    // Submodule patches (patches/<name>/*.patch, see gradle/submodule-patches.gradle) are applied while the
+    // build is configured; check them again before anything is compiled or CMake runs.
+    tasks.configureEach { task ->
+        if (task.name == 'preBuild' || task.name.startsWith('configureCMake')) {
+            task.dependsOn(':applySubmodulePatches')
         }
     }
 }
