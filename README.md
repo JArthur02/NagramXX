@@ -75,6 +75,7 @@ The workflow can be used from a fork of this repository.
 
 3. Configure GitHub Action secrets:
    - `LOCAL_PROPERTIES`: Base64-encoded content from step 2
+   - `RELEASE_KEYSTORE`: Base64-encoded keystore file (`base64 -w0 release.keystore`). When set, it replaces `TMessagesProj/release.keystore` at build time, so the keystore doesn't need to be committed
    - `HELPER_BOT_TOKEN`: Telegram bot token from [@Botfather](https://t.me/Botfather) (e.g., `1111:abcd`)
    - `HELPER_BOT_TARGET`: Primary Telegram chat ID (e.g., `777000`)
    - `HELPER_BOT_CANARY_TARGET`: Chat ID for test builds and metadata (can match `HELPER_BOT_TARGET`)
