@@ -1,58 +1,161 @@
 #!/usr/bin/env bash
-# Smoke test on an emulator: install the debug APK, launch it, walk to the login
-# screen, and fail if the app process crashes. Screenshots and logcat go to smoke/.
+# Smoke test on an emulator. Installs the debug APK, launches it, logs in to a fresh
+# account on Telegram's TEST servers (phone 99966XYYYY, code XXXXX, no SMS), then sends a
+# message to Saved Messages, opens Settings and N-Settings and runs the update check.
+#
+# Only crashes fail the job. Every other step is reported in the job summary, with
+# screenshots, UI dumps and logcat in smoke/.
 set -u
 PKG=nu.gpu.nagram
 OUT=smoke
 mkdir -p "$OUT"
+SUMMARY=${GITHUB_STEP_SUMMARY:-/dev/stdout}
+STEP=0
+
+# Test DC 2: the login code is "22222". A random suffix gives a new account each run.
+DC=2
+PHONE_REST="66${DC}$(printf '%04d' $((RANDOM % 10000)))"
+PHONE="999${PHONE_REST}"
+CODE="${DC}${DC}${DC}${DC}${DC}"
+
+report() { echo "| $1 | $2 |" >> "$SUMMARY"; echo "$1: $2"; }
+shot() { STEP=$((STEP + 1)); adb exec-out screencap -p > "$OUT/$(printf '%02d' $STEP)-$1.png"; }
+alive() { adb shell pidof "$PKG" >/dev/null; }
+dump() { adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb shell cat /sdcard/ui.xml > "$OUT/ui-last.xml"; }
+
+# Print "x y" for the centre of the first node whose text or content-desc matches $1
+# (case-insensitive regex). $2 optionally restricts the node class (e.g. EditText).
+find_node() {
+  dump || return 1
+  python3 - "$1" "${2:-}" "$OUT/ui-last.xml" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+pattern, cls, path = re.compile(sys.argv[1], re.I), sys.argv[2], sys.argv[3]
+for node in ET.parse(path).iter('node'):
+    if cls and not node.get('class', '').endswith(cls):
+        continue
+    if any(pattern.search(node.get(k) or '') for k in ('text', 'content-desc')):
+        x1, y1, x2, y2 = map(int, re.findall(r'\d+', node.get('bounds')))
+        print((x1 + x2) // 2, (y1 + y2) // 2)
+        break
+PY
+}
+tap_node() { local xy; xy=$(find_node "$@") && [ -n "$xy" ] && adb shell input tap $xy; }
+wait_node() { # pattern timeout_seconds [class]
+  local end=$((SECONDS + $2))
+  while [ $SECONDS -lt $end ]; do
+    [ -n "$(find_node "$1" "${3:-}")" ] && return 0
+    sleep 2
+  done
+  return 1
+}
+type_text() { adb shell input text "$1"; }
+
+echo "## Emulator smoke test" >> "$SUMMARY"
+echo "Test account: +$PHONE on Telegram test DC $DC" >> "$SUMMARY"
+echo "" >> "$SUMMARY"
+echo "| Step | Result |" >> "$SUMMARY"
+echo "|---|---|" >> "$SUMMARY"
 
 APK=$(ls TMessagesProj/build/outputs/apk/debug/*x86_64*.apk | head -1)
-echo "Installing $APK"
-adb install -r -g "$APK" || exit 1
+adb install -r -g "$APK" || { report "Install" "failed"; exit 1; }
 adb logcat -c
 
-shot() { adb exec-out screencap -p > "$OUT/$1.png"; }
-
-# Tap the first on-screen element whose text matches $1 (case-insensitive regex).
-tap_text() {
-  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || return 1
-  adb shell cat /sdcard/ui.xml > "$OUT/ui-$2.xml"
-  local bounds
-  bounds=$(python3 - "$1" "$OUT/ui-$2.xml" <<'PY'
-import re, sys, xml.etree.ElementTree as ET
-pattern, path = re.compile(sys.argv[1], re.I), sys.argv[2]
-for node in ET.parse(path).iter('node'):
-    if pattern.search(node.get('text', '') or node.get('content-desc', '')):
-        print(node.get('bounds')); break
-PY
-)
-  [ -n "$bounds" ] || return 1
-  read -r x1 y1 x2 y2 <<<"$(echo "$bounds" | tr -c '0-9' ' ')"
-  adb shell input tap $(((x1 + x2) / 2)) $(((y1 + y2) / 2))
-}
-
-alive() { adb shell pidof "$PKG" >/dev/null; }
-
+# 1. Launch
 adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null
-sleep 25
-shot 01-launch
-alive || { echo "::error::App is not running after launch"; FAILED=1; }
+sleep 20
+shot launch
+if alive; then report "Launch" "ok"; else report "Launch" "**app not running**"; fi
 
-if [ -z "${FAILED:-}" ]; then
-  if tap_text 'start messaging' intro; then
-    sleep 10
-    shot 02-after-start
+# 2. Login on the test backend
+LOGGED_IN=""
+if alive && tap_node 'start messaging'; then
+  sleep 5
+  shot phone-screen
+  if tap_node 'country code' EditText; then
+    adb shell input keyevent KEYCODE_MOVE_END
+    for _ in 1 2 3 4 5; do adb shell input keyevent KEYCODE_DEL; done
+    type_text 999   # "999" switches the app to the test backend
+    tap_node 'phone number' EditText && type_text "$PHONE_REST"
+    shot phone-entered
+    tap_node '^done$|^next$'
+    sleep 3
+    # Optional "is this number correct?" confirmation.
+    tap_node '^(yes|ok|continue)$' >/dev/null 2>&1
+    if wait_node '\bsent\b|enter (the )?code|check your telegram' 40; then
+      sleep 3
+      shot code-screen
+      type_text "$CODE"
+      sleep 10
+      # A new number goes to sign-up: first name, then Done.
+      if [ -n "$(find_node 'first name' EditText)" ]; then
+        tap_node 'first name' EditText && type_text Nagram
+        tap_node '^done$|^next$'
+        sleep 10
+      fi
+      # Terms of Service, if shown.
+      tap_node '^(accept|agree)$' >/dev/null 2>&1 && sleep 5
+      shot after-login
+      if wait_node 'search|chats|saved messages|archived' 30; then
+        LOGGED_IN=1
+        report "Login (test DC)" "ok"
+      else
+        report "Login (test DC)" "did not reach the chat list; see screenshots"
+      fi
+    else
+      report "Login (test DC)" "no code screen; see screenshots"
+    fi
   else
-    echo "::warning::'Start Messaging' button not found; see smoke/01-launch.png"
+    report "Login (test DC)" "country code field not found"
   fi
-  alive || { echo "::error::App died after opening the login flow"; FAILED=1; }
+else
+  report "Login (test DC)" "'Start Messaging' not found"
 fi
 
+# 3. Send a message to Saved Messages
+if [ -n "$LOGGED_IN" ]; then
+  adb shell am start -a android.intent.action.VIEW -d "tg://resolve?phone=$PHONE" -p "$PKG" >/dev/null
+  sleep 8
+  if tap_node '^message$' EditText; then
+    type_text "Smoke%stest%sfrom%sCI"
+    tap_node '^send$' && sleep 5
+    shot saved-messages
+    if [ -n "$(find_node 'Smoke test from CI')" ]; then report "Send message" "ok"; else report "Send message" "message not visible"; fi
+  else
+    shot saved-messages
+    report "Send message" "message field not found"
+  fi
+
+  # 4. Settings and N-Settings
+  adb shell am start -a android.intent.action.VIEW -d "tg://settings" -p "$PKG" >/dev/null
+  sleep 6
+  shot settings
+  for _ in 1 2 3; do [ -n "$(find_node 'N-Settings')" ] && break; adb shell input swipe 540 1600 540 600 300; sleep 1; done
+  if tap_node 'N-Settings'; then
+    sleep 4
+    shot nagram-settings
+    report "N-Settings" "opened"
+  else
+    report "N-Settings" "entry not found"
+  fi
+
+  # 5. Update check (GitHub Releases)
+  adb shell am start -a android.intent.action.VIEW -d "tg://update" -p "$PKG" >/dev/null
+  sleep 8
+  shot update-check
+  report "Update check" "ran; see screenshot"
+fi
+
+# Crash check
 adb logcat -d > "$OUT/logcat.txt"
+FAILED=0
 if grep -q "FATAL EXCEPTION" "$OUT/logcat.txt"; then
-  echo "::error::Crash in logcat:"
+  report "Crashes" "**FATAL EXCEPTION in logcat**"
   grep -A30 "FATAL EXCEPTION" "$OUT/logcat.txt" | head -60
   FAILED=1
+elif ! alive; then
+  report "Crashes" "**app process died**"
+  FAILED=1
+else
+  report "Crashes" "none"
 fi
-[ -z "${FAILED:-}" ] && echo "Smoke test passed."
-exit ${FAILED:-0}
+exit $FAILED
