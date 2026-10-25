@@ -124,8 +124,24 @@ if alive; then
     sleep 12
     shot code-screen
     # The code boxes take input from the app's own number pad, not from "input text".
-    tap_frac 24 44   # first code box
-    for d in $(echo "$CODE" | grep -o .); do keypad_digit "$d"; sleep 0.3; done
+    enter_code() {
+      tap_frac 24 44   # first code box
+      sleep 1
+      local i=0 d
+      for d in $(echo "$CODE" | grep -o .); do
+        i=$((i + 1))
+        # Screenshot before the last digit, which submits the code.
+        [ $i -eq ${#CODE} ] && shot "code-typed-$1"
+        keypad_digit "$d"
+        sleep 1
+      done
+    }
+    enter_code 1
+    sleep 6
+    if adb logcat -d | grep -q "PHONE_CODE_INVALID"; then
+      report "Login code" "rejected once (PHONE_CODE_INVALID); retrying"
+      enter_code 2
+    fi
     sleep 12
     shot after-code
     if ! logged_in; then
