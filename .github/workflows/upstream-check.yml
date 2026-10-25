@@ -1,0 +1,48 @@
+name: Upstream check
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    name: Check DrKLO/Telegram for a new version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - name: Compare versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CURRENT=$(sed -n 's/^APP_VERSION_NAME=//p' gradle.properties)
+          # Upstream marks each release with a commit titled "update to X.Y.Z (build)".
+          LATEST_COMMIT=$(gh api 'repos/DrKLO/Telegram/commits?per_page=50' \
+            --jq '[.[] | select(.commit.message | test("^update to [0-9]"))][0]')
+          if [ -z "$LATEST_COMMIT" ] || [ "$LATEST_COMMIT" = "null" ]; then
+            echo "No upstream release commit in the last 50 commits."
+            exit 0
+          fi
+          TITLE=$(echo "$LATEST_COMMIT" | jq -r '.commit.message | split("\n")[0]')
+          SHA=$(echo "$LATEST_COMMIT" | jq -r '.sha')
+          LATEST=$(echo "$TITLE" | sed -E 's/^update to ([0-9.]+).*/\1/')
+          echo "current=$CURRENT latest=$LATEST ($SHA)"
+          if [ "$(printf '%s\n%s\n' "$CURRENT" "$LATEST" | sort -V | tail -1)" = "$CURRENT" ]; then
+            echo "Up to date."
+            exit 0
+          fi
+          ISSUE_TITLE="Sync upstream Telegram $LATEST"
+          if gh issue list --state all --search "\"$ISSUE_TITLE\" in:title" --json number --jq 'length' | grep -qv '^0$'; then
+            echo "Issue already exists."
+            exit 0
+          fi
+          gh issue create --title "$ISSUE_TITLE" --body "Upstream DrKLO/Telegram published \`$TITLE\` ([$SHA](https://github.com/DrKLO/Telegram/commit/$SHA)).
+
+          This fork is on $CURRENT. Follow CONTRIBUTING.md (\"Syncing upstream\") to merge it."
