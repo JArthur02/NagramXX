@@ -1,6 +1,6 @@
 # Proposal: Reviving NagramXX on top of Telegram 13.0.3
 
-Status: **draft for review** · Analysed: 2026-10-25
+Status: **decisions recorded, ready for Phase 0** · Analysed: 2026-10-25
 
 ## 1. Where things stand
 
@@ -56,7 +56,7 @@ The full conflict list is in the appendix.
    - Re-apply them inside the Media3 submodule. That requires forking `Arseny271/media`, or carrying a patch that a Gradle task applies. Some patches may already be unnecessary under Media3; check each one before porting.
    - Port `tw/nekomimi/nekogram/streaming/MediaStreamingProvider.java` (the only fork-only file that uses `exoplayer2`) to `androidx.media3.*` imports.
    - Fork-modified upstream files that touch the player get the Media3 API through the merge: `VideoPlayer`, `MusicBrowserService`, `TelegramMediaSession`, `MediaController`.
-2. **tgcalls moved to a submodule** (`TelegramMessenger/tgcalls`). The fork adds a `customAudioBitrate` knob to `GroupInstanceCustomImpl` (+45 lines). Options: carry a small tgcalls fork, apply a patch at build time, or drop the feature.
+2. **tgcalls moved to a submodule** (`TelegramMessenger/tgcalls`). The fork adds a `customAudioBitrate` knob to `GroupInstanceCustomImpl` (+45 lines). **Decision 4: maintain it.** Keep the change as `patches/tgcalls/*.patch` in this repo and apply it to the submodule with `git apply` from a Gradle task that runs before CMake, failing loudly if the patch no longer applies. This avoids maintaining a separate tgcalls fork repository.
 3. **`CodeHighlighting.java` was removed** because upstream switched to native `libprisma`. Check whether the fork's 38-line change still matters, then drop or port it.
 4. **`VoIPController.java` was removed upstream.** The fork change only redirects call log paths to the cache directory. Re-apply it wherever upstream moved the logic, or drop it.
 5. **`buildSrc` lottie-meta plugin was replaced** by `TelegramBuildPlugin`, which also generates string-resource-ID assets and `LocalizationUtils`. Adopt upstream's plugin. Then confirm the fork's NekoX/Ayu string resources still resolve through `LocaleController` (`LocaleController` and `ApplicationLoader` are both conflicted files).
@@ -75,12 +75,12 @@ Recommendation: keep the fork's newer AGP 9 / Gradle 9 / compileSdk 37 / Java 21
 
 ### Phase 0 — Take ownership (small, can land first)
 
-- [ ] **New `applicationId`** (e.g. `nu.gpu.nagramxx`) and a **new signing key**. Official NagramX users can't upgrade in place without the original key, so a distinct ID lets both apps be installed side by side and avoids confusing install failures.
-- [ ] Point `BaseRemoteHelper.CHANNEL_METADATA_ID` at a channel we control, or turn off the in-app updater until one exists.
-- [ ] Update About-page links, `SessionCell` app-name detection, and the `Tools/scripts/upload.py` default URL.
-- [ ] CI: point `release.yml` at a branch that exists. Pin the `pyrogram` dependency to a reviewed commit, or switch to an actively maintained package.
-- [ ] Replace `google-services.json` with our own Firebase project, or build without FCM and rely on the existing UnifiedPush support.
-- [ ] README: replace the archive banner with a "maintained continuation of risin42/NagramX" note that credits the original.
+- [ ] **Keep `applicationId` `nu.gpu.nagram`** (decision 1). Generate a **new signing key**, since the original one is not available. Note: Android refuses to install a build signed with a different key over an existing NagramX install. Users of the official app must uninstall it first, which deletes local app data, so say this in the release notes.
+- [ ] **Turn off Crashlytics**: change `AndroidUtil.shouldEnableCrashlytics()` to return `false`. Because the package name stays the same, the check currently passes, and crash reports would go to the original maintainer's Firebase project (`nagram-x`).
+- [ ] **Push notifications** (decision 2): keep the existing `google-services.json` for now, because it is the zero-setup option. FCM stays the default, and the in-app and UnifiedPush modes already in *Settings → General → Push Service Type* serve as fallbacks. If FCM delivery stops (the Firebase project belongs to the original maintainer), switch the default to in-app and create our own Firebase project.
+- [ ] **In-app updater** (decision 5, GitHub Releases only): replace the channel-based `UpdateHelper` with a check of the GitHub Releases API for `JArthur02/NagramXX` that opens the release page. Until that exists, disable the check so it stops reading the archived channel `2477822904`. `EmojiHelper` reads emoji packs from the same channel; leave it as is while the channel stays readable.
+- [ ] **CI release** (decision 5): replace the Telegram upload job (`Tools/scripts/upload.py`, which installs an unpinned `risin42/pyrogram`) with a GitHub Release step that attaches the APKs. Point `release.yml` at a branch that exists. Store the new keystore passwords and Telegram API credentials as `LOCAL_PROPERTIES` in Actions secrets.
+- [ ] Update About-page links (`NekoAboutActivity`) and the README. Replace the archive banner with a "maintained continuation of risin42/NagramX" note that credits the original.
 
 ### Phase 1 — Sync to upstream 13.0.3
 
@@ -105,13 +105,15 @@ Recommendation: keep the fork's newer AGP 9 / Gradle 9 / compileSdk 37 / Java 21
 - [ ] Merge upstream within about 2 weeks of each release. Small, frequent syncs keep conflicts at the 1–2-hunk level seen here.
 - [ ] Write down the merge-base convention (upstream snapshot commit per sync) in `CONTRIBUTING.md`.
 
-## 5. Decisions needed from the maintainer
+## 5. Decisions (maintainer, 2026-10-25)
 
-1. **Package name and signing:** use a new `applicationId` (recommended) or keep `nu.gpu.nagram`?
-2. **Push notifications:** use our own Firebase project, or UnifiedPush only?
-3. **Upstream's new TON wallet:** ship it, or hide it behind a toggle like other upstream features the fork disables?
-4. **Group-call bitrate feature:** maintain a tgcalls patch, or drop it?
-5. **Distribution:** GitHub Releases only, or also a Telegram channel (which the Phase 0 updater change needs)?
+| # | Question | Decision | Effect on the plan |
+|---|---|---|---|
+| 1 | Package name / signing | Keep `nu.gpu.nagram` | New signing key; existing NagramX users must uninstall first; turn off Crashlytics (Phase 0). |
+| 2 | Push notifications | The more convenient option | Keep the existing FCM config with in-app/UnifiedPush fallbacks; own Firebase only if FCM breaks (Phase 0). |
+| 3 | Upstream TON wallet | Hide behind a toggle | New `NaConfig` switch, **off by default**, that gates every entry point: `SettingsActivity`, `DialogsActivity`, `LinkManager`, `ChatActionCell`, and the `ChatAttachAlert` "Gram" tab (Phase 1). |
+| 4 | Group-call bitrate | Maintain | tgcalls patch applied at build time (§3.1). |
+| 5 | Distribution | GitHub Releases only | Updater uses the GitHub Releases API; CI publishes GitHub Releases; Telegram upload removed (Phase 0). |
 
 ## Appendix — Conflicts from the trial merge
 
