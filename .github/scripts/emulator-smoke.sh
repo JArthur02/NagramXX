@@ -38,6 +38,15 @@ SCREEN=$(adb shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1)
 W=${SCREEN%x*}; H=${SCREEN#*x}
 # Tap at a fraction of the screen size, e.g. tap_frac 50 88 taps (50% width, 88% height).
 tap_frac() { adb shell input tap $((W * $1 / 100)) $((H * $2 / 100)); }
+# Tap a digit on the login screens' built-in number pad (3 columns, 4 rows at the bottom).
+keypad_digit() {
+  local d=$1 col row
+  if [ "$d" = 0 ]; then col=50; row=94; else
+    col=$(( (d - 1) % 3 )); col=$(( col == 0 ? 18 : (col == 1 ? 50 : 82) ))
+    row=$(( (d - 1) / 3 )); row=$(( row == 0 ? 69 : (row == 1 ? 78 : 86) ))
+  fi
+  tap_frac "$col" "$row"
+}
 
 # Print "x y" for the centre of the first node whose text or content-desc matches $1
 # (case-insensitive regex). $2 optionally restricts the node class (e.g. EditText).
@@ -114,7 +123,9 @@ if alive; then
     # the code field is focused, so type the code blind.
     sleep 12
     shot code-screen
-    type_text "$CODE"
+    # The code boxes take input from the app's own number pad, not from "input text".
+    tap_frac 24 44   # first code box
+    for d in $(echo "$CODE" | grep -o .); do keypad_digit "$d"; sleep 0.3; done
     sleep 12
     shot after-code
     if ! logged_in; then
