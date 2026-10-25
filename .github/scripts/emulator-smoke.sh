@@ -12,8 +12,8 @@ mkdir -p "$OUT"
 SUMMARY=${GITHUB_STEP_SUMMARY:-/dev/stdout}
 STEP=0
 
-# Test DC 2: the login code is "22222". A random suffix gives a new account each run.
-DC=2
+# Test DC 1: the login code is "11111". A random suffix gives a new account each run.
+DC=1
 PHONE_REST="66${DC}$(printf '%04d' $((RANDOM % 10000)))"
 PHONE="999${PHONE_REST}"
 CODE="${DC}${DC}${DC}${DC}${DC}"
